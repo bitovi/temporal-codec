@@ -1,10 +1,9 @@
-package main
+package codec
 
 import (
 	"fmt"
 
 	commonpb "go.temporal.io/api/common/v1"
-
 	"go.temporal.io/sdk/converter"
 )
 
@@ -15,19 +14,6 @@ const (
 	// MetadataEncryptionKeyID is "encryption-key-id"
 	MetadataEncryptionKeyID = "encryption-key-id"
 )
-
-type DataConverter struct {
-	// Until EncodingDataConverter supports workflow.ContextAware we'll store parent here.
-	parent converter.DataConverter
-	converter.DataConverter
-	options DataConverterOptions
-}
-
-type DataConverterOptions struct {
-	KeyID string
-	// Enable ZLib compression before encryption.
-	Compress bool
-}
 
 // Codec implements PayloadCodec using AES Crypt.
 type Codec struct {

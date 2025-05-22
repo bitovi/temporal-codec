@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
+
+	"codec-server/pkg/codec"
 )
 
 func getEnv(key, defaultValue string) string {
@@ -105,7 +107,7 @@ func main() {
 	})
 
 	// Create codec instance
-	codec := &Codec{
+	codec := &codec.Codec{
 		KeyID: config.KeyID,
 		Keys:  config.Keys,
 	}
@@ -167,7 +169,7 @@ func handleEncode(c *gin.Context) {
 	}
 
 	// Encode using the Codec
-	codec := &Codec{
+	codec := &codec.Codec{
 		KeyID: config.KeyID,
 		Keys:  config.Keys,
 	}
@@ -192,7 +194,7 @@ func handleDecode(c *gin.Context) {
 	}
 
 	// Decode using the Codec
-	codec := &Codec{
+	codec := &codec.Codec{
 		KeyID: config.KeyID,
 		Keys:  config.Keys,
 	}
