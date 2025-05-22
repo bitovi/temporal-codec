@@ -8,8 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -26,19 +24,6 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// Payload represents the structure of a Temporal payload
-type Payload struct {
-	Metadata map[string]string `json:"metadata"`
-	Data     string            `json:"data"`
-}
-
-// PayloadData represents the structure of data within a Temporal payload
-type PayloadData struct {
-	Data    interface{} `json:"data"`
-	Timeout int         `json:"timeout,omitempty"` // Timeout in seconds, optional
-}
-
-// CodecRequest represents the request body for encode/decode operations
 type CodecRequest struct {
 	Payloads []*commonpb.Payload `json:"payloads"`
 }
@@ -50,18 +35,14 @@ type CodecResponse struct {
 
 // Config holds the server configuration
 type Config struct {
-	Port            string
-	DefaultTimeout  time.Duration
-	SimulateTimeout bool
-	KeyID           string
-	Keys            map[string][]byte
+	Port  string
+	KeyID string
+	Keys  map[string][]byte
 }
 
 var config = Config{
-	Port:            getEnv("PORT", "8080"),
-	DefaultTimeout:  5 * time.Second,
-	SimulateTimeout: false,
-	KeyID:           getEnv("KEY_ID", "test-key"),
+	Port:  getEnv("PORT", "8080"),
+	KeyID: getEnv("KEY_ID", "test-key"),
 	Keys: map[string][]byte{
 		"test-key": []byte(getEnv("ENCRYPTION_KEY", "12345678901234567890123456789012")), // 32 bytes for AES-256
 	},
@@ -82,34 +63,6 @@ func main() {
 	// Health check endpoint
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
-	})
-
-	// Toggle timeout simulation
-	r.POST("/toggle-timeout", func(c *gin.Context) {
-		config.SimulateTimeout = !config.SimulateTimeout
-		c.JSON(http.StatusOK, gin.H{
-			"simulate_timeout": config.SimulateTimeout,
-		})
-	})
-
-	// Set timeout duration
-	r.POST("/set-timeout", func(c *gin.Context) {
-		timeoutStr := c.Query("duration")
-		if timeoutStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "duration parameter is required"})
-			return
-		}
-
-		timeout, err := strconv.Atoi(timeoutStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid duration format"})
-			return
-		}
-
-		config.DefaultTimeout = time.Duration(timeout) * time.Second
-		c.JSON(http.StatusOK, gin.H{
-			"timeout": config.DefaultTimeout.Seconds(),
-		})
 	})
 
 	// Create codec instance
@@ -133,7 +86,6 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
 		}
-		log.Printf("Received decode request: %s", string(body))
 
 		// Parse the request
 		var req CodecRequest
@@ -180,27 +132,6 @@ func handleEncode(c *gin.Context) {
 		Keys:  config.Keys,
 	}
 
-	// Process each payload
-	for _, payload := range req.Payloads {
-		log.Printf("Payload: %+v", payload)
-		// Try to extract timeout from payload data
-		if len(payload.Data) > 0 {
-			// First unmarshal to get the JSON string
-			var jsonStr string
-			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
-				// Then unmarshal the actual data structure
-				var payloadData PayloadData
-				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
-					log.Printf("Payload data: %+v", payloadData)
-					// If timeout is specified and simulation is enabled, apply it
-					if payloadData.Timeout > 0 && config.SimulateTimeout {
-						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
-					}
-				}
-			}
-		}
-
-	}
 	// Encode single payload
 	encoded, err := codec.Encode(req.Payloads)
 	if err != nil {
@@ -228,27 +159,6 @@ func handleDecode(c *gin.Context) {
 		Keys:  config.Keys,
 	}
 
-	// Process each payload
-	for _, payload := range req.Payloads {
-		log.Printf("Payload: %+v", payload)
-		// Try to extract timeout from payload data
-		if len(payload.Data) > 0 {
-			// First unmarshal to get the JSON string
-			var jsonStr string
-			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
-				// Then unmarshal the actual data structure
-				var payloadData PayloadData
-				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
-					log.Printf("Payload data: %+v", payloadData)
-					// If timeout is specified and simulation is enabled, apply it
-					if payloadData.Timeout > 0 && config.SimulateTimeout {
-						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
-					}
-				}
-			}
-		}
-
-	}
 	// Decode single payload
 	decoded, err := codec.Decode(req.Payloads)
 	if err != nil {
