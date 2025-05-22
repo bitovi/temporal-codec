@@ -6,7 +6,9 @@ WORKDIR /app
 RUN go install github.com/cosmtrek/air@v1.49.0
 
 COPY go.mod ./
+COPY go.sum ./
 COPY *.go ./
+COPY pkg/ ./pkg/
 COPY .air.toml ./
 
 RUN go mod tidy

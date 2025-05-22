@@ -32,6 +32,12 @@ type Payload struct {
 	Data     string            `json:"data"`
 }
 
+// PayloadData represents the structure of data within a Temporal payload
+type PayloadData struct {
+	Data    interface{} `json:"data"`
+	Timeout int         `json:"timeout,omitempty"` // Timeout in seconds, optional
+}
+
 // CodecRequest represents the request body for encode/decode operations
 type CodecRequest struct {
 	Payloads []*commonpb.Payload `json:"payloads"`
@@ -173,9 +179,32 @@ func handleEncode(c *gin.Context) {
 		KeyID: config.KeyID,
 		Keys:  config.Keys,
 	}
+
+	// Process each payload
+	for _, payload := range req.Payloads {
+		log.Printf("Payload: %+v", payload)
+		// Try to extract timeout from payload data
+		if len(payload.Data) > 0 {
+			// First unmarshal to get the JSON string
+			var jsonStr string
+			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
+				// Then unmarshal the actual data structure
+				var payloadData PayloadData
+				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
+					log.Printf("Payload data: %+v", payloadData)
+					// If timeout is specified and simulation is enabled, apply it
+					if payloadData.Timeout > 0 && config.SimulateTimeout {
+						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+					}
+				}
+			}
+		}
+
+	}
+	// Encode single payload
 	encoded, err := codec.Encode(req.Payloads)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to encode: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to encode payload: %v", err)})
 		return
 	}
 
@@ -198,16 +227,37 @@ func handleDecode(c *gin.Context) {
 		KeyID: config.KeyID,
 		Keys:  config.Keys,
 	}
+
+	// Process each payload
+	for _, payload := range req.Payloads {
+		log.Printf("Payload: %+v", payload)
+		// Try to extract timeout from payload data
+		if len(payload.Data) > 0 {
+			// First unmarshal to get the JSON string
+			var jsonStr string
+			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
+				// Then unmarshal the actual data structure
+				var payloadData PayloadData
+				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
+					log.Printf("Payload data: %+v", payloadData)
+					// If timeout is specified and simulation is enabled, apply it
+					if payloadData.Timeout > 0 && config.SimulateTimeout {
+						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+					}
+				}
+			}
+		}
+
+	}
+	// Decode single payload
 	decoded, err := codec.Decode(req.Payloads)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to decode: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to decode payload: %v", err)})
 		return
 	}
-
 	// Convert back to response format
 	response := CodecResponse{
 		Payloads: decoded,
 	}
-
 	c.JSON(http.StatusOK, response)
 }
