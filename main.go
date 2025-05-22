@@ -34,8 +34,13 @@ type Payload struct {
 
 // PayloadData represents the structure of data within a Temporal payload
 type PayloadData struct {
-	Data    interface{} `json:"data"`
-	Timeout int         `json:"timeout,omitempty"` // Timeout in seconds, optional
+	Data         interface{} `json:"data"`
+	Timeout      int         `json:"timeout,omitempty"` // Timeout in seconds, optional
+	ActivityID   string      `json:"ActivityID,omitempty"`
+	ActivityType string      `json:"ActivityType,omitempty"`
+	ReplayTime   string      `json:"ReplayTime,omitempty"`
+	Attempt      int         `json:"Attempt,omitempty"`
+	Backoff      int         `json:"Backoff,omitempty"`
 }
 
 // CodecRequest represents the request body for encode/decode operations
@@ -60,7 +65,7 @@ type Config struct {
 var config = Config{
 	Port:            getEnv("PORT", "8080"),
 	DefaultTimeout:  5 * time.Second,
-	SimulateTimeout: false,
+	SimulateTimeout: true,
 	KeyID:           getEnv("KEY_ID", "test-key"),
 	Keys: map[string][]byte{
 		"test-key": []byte(getEnv("ENCRYPTION_KEY", "12345678901234567890123456789012")), // 32 bytes for AES-256
@@ -82,6 +87,12 @@ func main() {
 	// Health check endpoint
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+	})
+
+	r.GET("/toggle-timeout", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"simulate_timeout": config.SimulateTimeout,
+		})
 	})
 
 	// Toggle timeout simulation
@@ -133,7 +144,6 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
 		}
-		log.Printf("Received decode request: %s", string(body))
 
 		// Parse the request
 		var req CodecRequest
@@ -185,22 +195,53 @@ func handleEncode(c *gin.Context) {
 		log.Printf("Payload: %+v", payload)
 		// Try to extract timeout from payload data
 		if len(payload.Data) > 0 {
-			// First unmarshal to get the JSON string
-			var jsonStr string
-			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
-				// Then unmarshal the actual data structure
-				var payloadData PayloadData
-				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
-					log.Printf("Payload data: %+v", payloadData)
-					// If timeout is specified and simulation is enabled, apply it
-					if payloadData.Timeout > 0 && config.SimulateTimeout {
-						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+			var payloadData PayloadData
+			// Try to unmarshal directly first
+			if err := json.Unmarshal(payload.Data, &payloadData); err != nil {
+				// If direct unmarshal fails, try to unmarshal as string first
+				var jsonStr string
+				if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
+					// Then try to unmarshal the string into PayloadData
+					if err := json.Unmarshal([]byte(jsonStr), &payloadData); err != nil {
+						// Skip this payload if we can't unmarshal it
+						continue
 					}
+				} else {
+					// Skip this payload if we can't unmarshal it
+					continue
+				}
+			}
+
+			// Only process if we successfully unmarshaled the data
+			if payloadData.ActivityType != "" {
+				log.Printf("Payload data: %+v", payloadData)
+
+				// Handle activity-specific behavior
+				if payloadData.ActivityType == "ProcessPayloadActivity" {
+					log.Printf("🔄 [ProcessPayloadActivity] Adding 2 second delay for ActivityID: %s", payloadData.ActivityID)
+					time.Sleep(2 * time.Second)
+					log.Printf("✅ [ProcessPayloadActivity] Delay completed for ActivityID: %s", payloadData.ActivityID)
+
+					// Optionally fail the request based on some condition
+					if payloadData.Attempt == 0 {
+						log.Printf("❌ [ProcessPayloadActivity] Simulating failure after %d attempts for ActivityID: %s", payloadData.Attempt, payloadData.ActivityID)
+						c.JSON(http.StatusInternalServerError, gin.H{
+							"error": "Simulated failure for ProcessPayloadActivity after multiple attempts",
+						})
+						return
+					}
+				}
+
+				// If timeout is specified and simulation is enabled, apply it
+				if payloadData.Timeout > 0 && config.SimulateTimeout {
+					log.Printf("⏳ [Timeout] Adding %d second delay for ActivityID: %s", payloadData.Timeout, payloadData.ActivityID)
+					time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+					log.Printf("✅ [Timeout] Delay completed for ActivityID: %s", payloadData.ActivityID)
 				}
 			}
 		}
-
 	}
+
 	// Encode single payload
 	encoded, err := codec.Encode(req.Payloads)
 	if err != nil {
@@ -230,25 +271,55 @@ func handleDecode(c *gin.Context) {
 
 	// Process each payload
 	for _, payload := range req.Payloads {
-		log.Printf("Payload: %+v", payload)
 		// Try to extract timeout from payload data
 		if len(payload.Data) > 0 {
-			// First unmarshal to get the JSON string
-			var jsonStr string
-			if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
-				// Then unmarshal the actual data structure
-				var payloadData PayloadData
-				if err := json.Unmarshal([]byte(jsonStr), &payloadData); err == nil {
-					log.Printf("Payload data: %+v", payloadData)
-					// If timeout is specified and simulation is enabled, apply it
-					if payloadData.Timeout > 0 && config.SimulateTimeout {
-						time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+			var payloadData PayloadData
+			// Try to unmarshal directly first
+			if err := json.Unmarshal(payload.Data, &payloadData); err != nil {
+				// If direct unmarshal fails, try to unmarshal as string first
+				var jsonStr string
+				if err := json.Unmarshal(payload.Data, &jsonStr); err == nil {
+					// Then try to unmarshal the string into PayloadData
+					if err := json.Unmarshal([]byte(jsonStr), &payloadData); err != nil {
+						// Skip this payload if we can't unmarshal it
+						continue
 					}
+				} else {
+					// Skip this payload if we can't unmarshal it
+					continue
+				}
+			}
+
+			// Only process if we successfully unmarshaled the data
+			if payloadData.ActivityType != "" {
+				log.Printf("Payload data: %+v", payloadData)
+
+				// Handle activity-specific behavior
+				if payloadData.ActivityType == "ProcessPayloadActivity" {
+					log.Printf("🔄 [ProcessPayloadActivity] Adding 2 second delay for ActivityID: %s", payloadData.ActivityID)
+					time.Sleep(16 * time.Second)
+					log.Printf("✅ [ProcessPayloadActivity] Delay completed for ActivityID: %s", payloadData.ActivityID)
+
+					// Optionally fail the request based on some condition
+					if payloadData.Attempt == 0 {
+						log.Printf("❌ [ProcessPayloadActivity] Simulating failure after %d attempts for ActivityID: %s", payloadData.Attempt, payloadData.ActivityID)
+						c.JSON(http.StatusInternalServerError, gin.H{
+							"error": "Simulated failure for ProcessPayloadActivity after multiple attempts",
+						})
+						return
+					}
+				}
+
+				// If timeout is specified and simulation is enabled, apply it
+				if payloadData.Timeout > 0 && config.SimulateTimeout {
+					log.Printf("⏳ [Timeout] Adding %d second delay for ActivityID: %s", payloadData.Timeout, payloadData.ActivityID)
+					time.Sleep(time.Duration(payloadData.Timeout) * time.Second)
+					log.Printf("✅ [Timeout] Delay completed for ActivityID: %s", payloadData.ActivityID)
 				}
 			}
 		}
-
 	}
+
 	// Decode single payload
 	decoded, err := codec.Decode(req.Payloads)
 	if err != nil {
