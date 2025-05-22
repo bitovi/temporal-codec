@@ -5,8 +5,8 @@ A Go implementation of a Temporal Codec server that provides encryption and decr
 ## Features
 
 - `/encode` endpoint for encrypting payloads using AES-GCM
+- `/decoder` endpoint for encdecryptingypting payloads using AES-GCM
 - `/decode` endpoint for decrypting payloads
-- Configurable timeout simulation for testing
 - CORS support for Temporal Web UI integration
 - Health check endpoint
 - Key rotation support via key IDs
@@ -33,6 +33,13 @@ The server can be configured using environment variables:
 For detailed implementation examples and usage instructions, see [codec/README.md](codec/README.md).
 
 ## Running the Server
+
+### Docker Compose (includes Temporal)
+
+1. docker compose up
+2. docker compose down
+
+### Standalone
 
 1. Install dependencies:
 ```bash
