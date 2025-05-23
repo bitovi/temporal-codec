@@ -2,6 +2,7 @@ package main
 
 import (
 	codec "codec-server/codec"
+	"codec-server/models"
 	"context"
 	"log"
 
@@ -40,12 +41,17 @@ func main() {
 		TaskQueue: "codecserver",
 	}
 
+	payload := models.PayloadData{
+		Data:         "Plain text input",
+		ActivityType: "SimpleActivity",
+		Timeout:      9,
+	}
 	// The workflow input "My Compressed Friend" will be encoded by the codec before being sent to Temporal
 	we, err := c.ExecuteWorkflow(
 		context.Background(),
 		workflowOptions,
 		codec.Workflow,
-		"Plain text input",
+		payload,
 	)
 	if err != nil {
 		log.Fatalln("Unable to execute workflow", err)

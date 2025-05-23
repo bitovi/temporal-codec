@@ -1,8 +1,10 @@
 package codec
 
 import (
+	"codec-server/models"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -15,12 +17,12 @@ import (
 // Workflow is a standard workflow definition.
 // Note that the Workflow and Activity don't need to care that
 // their inputs/results are being encoded.
-func Workflow(ctx workflow.Context, input string) (string, error) {
+func Workflow(ctx workflow.Context, input models.PayloadData) (string, error) {
 	ao := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Second,
+		StartToCloseTimeout: 5 * time.Second,
 	}
 	lao := workflow.LocalActivityOptions{
-		StartToCloseTimeout: 10 * time.Second,
+		StartToCloseTimeout: 5 * time.Second,
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 	ctx = workflow.WithLocalActivityOptions(ctx, lao)
@@ -50,12 +52,10 @@ func Workflow(ctx workflow.Context, input string) (string, error) {
 		return "", err
 	}
 
-	workflow.Sleep(ctx, 10*time.Second)
-	logger.Info("Codec Server workflow slept for 10 seconds, about to attempt /timeout activity.")
-
-	err = workflow.ExecuteActivity(ctx, TimeoutActivity, input).Get(ctx, &result)
+	logger.Info("About to execute next activity...")
+	err = workflow.ExecuteActivity(ctx, Activity, input).Get(ctx, &result)
 	if err != nil {
-		logger.Error("TimeoutActivity failed.", "Error", err)
+		logger.Error("Activity failed.", "Error", err)
 		return "", err
 	}
 
@@ -64,14 +64,14 @@ func Workflow(ctx workflow.Context, input string) (string, error) {
 	return result, nil
 }
 
-func Activity(ctx context.Context, input string) (string, error) {
+func Activity(ctx context.Context, input models.PayloadData) (string, error) {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Activity", "input", input)
 
-	return "Received " + input, nil
+	return fmt.Sprintf("Received %s", input.Data), nil
 }
 
-func TimeoutActivity(ctx context.Context, expenseID string) error {
+func TimeoutActivity(ctx context.Context, input models.PayloadData) error {
 
 	resp, err := http.Get("http://localhost:5173/timeout")
 	if err != nil {
@@ -84,7 +84,7 @@ func TimeoutActivity(ctx context.Context, expenseID string) error {
 	}
 
 	if string(body) == "SUCCEED" {
-		activity.GetLogger(ctx).Info("Expense created.", "ExpenseID", expenseID)
+		activity.GetLogger(ctx).Info("Activity unexpectedly succeeded.", "input", input)
 		return nil
 	}
 

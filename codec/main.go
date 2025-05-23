@@ -2,6 +2,7 @@ package codec
 
 import (
 	"bytes"
+	"codec-server/models"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,25 +17,9 @@ type HTTPCodec struct {
 	CodecServerURL string
 }
 
-// Payload represents the structure for codec server communication
-type Payload struct {
-	Metadata map[string]string `json:"metadata"`
-	Data     string            `json:"data"`
-}
-
-// CodecRequest represents the request to the codec server
-type CodecRequest struct {
-	Payloads []*commonpb.Payload `json:"payloads"`
-}
-
-// CodecResponse represents the response from the codec server
-type CodecResponse struct {
-	Payloads []*commonpb.Payload `json:"payloads"`
-}
-
 func (c *HTTPCodec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error) {
 	// Send request to codec server
-	reqBody, err := json.Marshal(CodecRequest{Payloads: payloads})
+	reqBody, err := json.Marshal(models.CodecRequest{Payloads: payloads})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
@@ -51,7 +36,7 @@ func (c *HTTPCodec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, e
 		return nil, fmt.Errorf("codec server returned error: %s (URL: %s, Body: %s)", resp.Status, c.CodecServerURL, string(bodyBytes))
 	}
 
-	var codecResp CodecResponse
+	var codecResp models.CodecResponse
 	if err := json.NewDecoder(resp.Body).Decode(&codecResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
@@ -61,7 +46,7 @@ func (c *HTTPCodec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, e
 
 func (c *HTTPCodec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error) {
 	// Send request to codec server
-	reqBody, err := json.Marshal(CodecRequest{Payloads: payloads})
+	reqBody, err := json.Marshal(models.CodecRequest{Payloads: payloads})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
@@ -78,7 +63,7 @@ func (c *HTTPCodec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, e
 		return nil, fmt.Errorf("codec server returned error: %s", resp.Status)
 	}
 
-	var codecResp CodecResponse
+	var codecResp models.CodecResponse
 	if err := json.NewDecoder(resp.Body).Decode(&codecResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
