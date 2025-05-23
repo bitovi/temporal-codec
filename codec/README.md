@@ -76,6 +76,17 @@ func main() {
 }
 ```
 
+## Run steps
+
+1) Run the following command to start the worker
+   ```
+   go run codec/worker/main.go
+   ```
+2) Run the following command to start the example
+   ```
+   go run codec/starter/main.go
+   ```
+
 ## Important Notes
 
 1. The codec server must be running before starting your worker

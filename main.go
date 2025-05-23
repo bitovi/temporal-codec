@@ -13,9 +13,9 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 
+	"codec-server/models"
 	"codec-server/pkg/codec"
 )
 
@@ -26,43 +26,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// Payload represents the structure of a Temporal payload
-type Payload struct {
-	Metadata map[string]string `json:"metadata"`
-	Data     string            `json:"data"`
-}
-
-// PayloadData represents the structure of data within a Temporal payload
-type PayloadData struct {
-	Data         interface{} `json:"data"`
-	Timeout      int         `json:"timeout,omitempty"` // Timeout in seconds, optional
-	ActivityID   string      `json:"ActivityID,omitempty"`
-	ActivityType string      `json:"ActivityType,omitempty"`
-	ReplayTime   string      `json:"ReplayTime,omitempty"`
-	Attempt      int         `json:"Attempt,omitempty"`
-	Backoff      int         `json:"Backoff,omitempty"`
-}
-
-// CodecRequest represents the request body for encode/decode operations
-type CodecRequest struct {
-	Payloads []*commonpb.Payload `json:"payloads"`
-}
-
-// CodecResponse represents the response body for encode/decode operations
-type CodecResponse struct {
-	Payloads []*commonpb.Payload `json:"payloads"`
-}
-
-// Config holds the server configuration
-type Config struct {
-	Port            string
-	DefaultTimeout  time.Duration
-	SimulateTimeout bool
-	KeyID           string
-	Keys            map[string][]byte
-}
-
-var config = Config{
+var config = &models.Config{
 	Port:            getEnv("PORT", "8080"),
 	DefaultTimeout:  5 * time.Second,
 	SimulateTimeout: true,
@@ -146,7 +110,7 @@ func main() {
 		}
 
 		// Parse the request
-		var req CodecRequest
+		var req models.CodecRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			log.Printf("Error parsing request: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
@@ -178,7 +142,7 @@ func main() {
 }
 
 func handleEncode(c *gin.Context) {
-	var req CodecRequest
+	var req models.CodecRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request format: %v", err)})
 		return
@@ -195,7 +159,7 @@ func handleEncode(c *gin.Context) {
 		log.Printf("Payload: %+v", payload)
 		// Try to extract timeout from payload data
 		if len(payload.Data) > 0 {
-			var payloadData PayloadData
+			var payloadData models.PayloadData
 			// Try to unmarshal directly first
 			if err := json.Unmarshal(payload.Data, &payloadData); err != nil {
 				// If direct unmarshal fails, try to unmarshal as string first
@@ -250,14 +214,14 @@ func handleEncode(c *gin.Context) {
 	}
 
 	// Convert back to response format
-	response := CodecResponse{
+	response := models.CodecResponse{
 		Payloads: encoded,
 	}
 	c.JSON(http.StatusOK, response)
 }
 
 func handleDecode(c *gin.Context) {
-	var req CodecRequest
+	var req models.CodecRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request format: %v", err)})
 		return
@@ -273,7 +237,7 @@ func handleDecode(c *gin.Context) {
 	for _, payload := range req.Payloads {
 		// Try to extract timeout from payload data
 		if len(payload.Data) > 0 {
-			var payloadData PayloadData
+			var payloadData models.PayloadData
 			// Try to unmarshal directly first
 			if err := json.Unmarshal(payload.Data, &payloadData); err != nil {
 				// If direct unmarshal fails, try to unmarshal as string first
@@ -327,7 +291,7 @@ func handleDecode(c *gin.Context) {
 		return
 	}
 	// Convert back to response format
-	response := CodecResponse{
+	response := models.CodecResponse{
 		Payloads: decoded,
 	}
 	c.JSON(http.StatusOK, response)
