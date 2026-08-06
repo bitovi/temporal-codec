@@ -1,22 +1,15 @@
-FROM golang:1.23-alpine
+# syntax=docker/dockerfile:1.7
 
-WORKDIR /app
+FROM golang:1.26.5-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/temporal-codec ./cmd/server
 
-# Install Air for hot reloading (using a version compatible with Go 1.21)
-RUN go install github.com/cosmtrek/air@v1.49.0
-
-COPY go.mod ./
-COPY go.sum ./
-COPY *.go ./
-COPY pkg/ ./pkg/
-COPY .air.toml ./
-
-RUN go mod tidy
-
-# Build the application
-RUN go build -o codec-server
-
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /
+COPY --from=build /out/temporal-codec /temporal-codec
+USER nonroot:nonroot
 EXPOSE 8080
-
-# Use Air for development
-CMD ["air"] 
+ENTRYPOINT ["/temporal-codec"]

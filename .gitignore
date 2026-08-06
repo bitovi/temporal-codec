@@ -1,1 +1,24 @@
-tmp
+# Binaries
+/temporal-codec
+/bin/
+/dist/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# Env / secrets (never commit real credentials)
+.env
+.env.local
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Build
+*.exe
+*.dll
+*.so
+*.dylib
