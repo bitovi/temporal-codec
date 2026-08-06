@@ -1,10 +1,6 @@
-# bitovi/temporal-codec:deploy/values.yaml — platform interface (ADR 0008)
-# Target repo once promoted: https://github.com/bitovi/temporal-codec
-# Until then source of truth is pocs/temporal-codec (lab).
-#
-# Platform GitOps: gitops/apps/temporal-codec.yaml (wave 30) + optional
-# gitops/temporal-codec/values.yaml overlay. Image tag empty until first CI
-# write-back (Deployment gated on tag).
+# Platform interface for the shared temporal-codec ContainerApp (platform-owned).
+# GitOps Application lives in bitovi-platform-services (gitops/apps/temporal-codec.yaml).
+# Image tag is empty until CI write-back (Deployment gated on a non-empty tag).
 name: temporal-codec
 repo: bitovi/temporal-codec
 
@@ -12,7 +8,6 @@ workloads:
   main:
     kind: server
     image:
-      # empty tag → no Deployment until CI writes the first release tag
       tag: ""
     port: 8080
     health: /health
@@ -30,11 +25,10 @@ workloads:
       TEMPORAL_CLOUD_JWKS_URL: https://login.tmprl.cloud/.well-known/jwks.json
       TEMPORAL_CLOUD_JWT_AUDIENCE: https://saas-api.tmprl.cloud
       CORS_ALLOWED_ORIGINS: https://cloud.temporal.io
-      # Per Cloud Namespace CMK alias (ADR 0008). After JWT authz, decode loads
-      # only awskms://alias/platform-managed/<short>-codec for that namespace.
-      # Never decrypts ns A with ns B's key. Not a single fleet default key.
+      # After JWT authz, decode loads only this alias for the authorized namespace.
+      # awskms://alias/platform-managed/<short>-codec — never a foreign namespace key.
       ENCRYPTION_URI_TEMPLATE: "awskms://alias/platform-managed/%s-codec"
     capabilities:
       # Fleet reader: kms:Decrypt / DescribeKey on Purpose=temporal-codec
-      # (no key Create; no App tag restriction). Requires platform boundary allowlist.
+      # (no key Create; no App / TemporalNamespace tag restriction on the reader).
       - temporal-codec-reader
