@@ -301,6 +301,18 @@ lives in **bitovi-platform-services**.
      the interface (`kind: worker` + `dependencies.temporal`). They do not
      deploy this service.
 
+### Team interface (workers live in platform docs)
+
+Teams declare workers in their app interface values (`kind: worker`,
+`uses: [temporal]`, `dependencies.temporal.namespace`, 1Password client keys on
+the proxy sidecar only). This repo is decode UI only; do not use it as the
+worker guide.
+
+Full field list and 1Password key names:
+[bitovi-platform-services `docs/operations/temporal-cloud-namespace.md`](https://github.com/bitovi/bitovi-platform-services/blob/main/docs/operations/temporal-cloud-namespace.md)
+(section **Declaring a worker**). Living example:
+[`charts/tests/interface-tests/cases/temporal-worker.yaml`](https://github.com/bitovi/bitovi-platform-services/blob/main/charts/tests/interface-tests/cases/temporal-worker.yaml).
+
 Public URL: **`https://temporal-codec.bitovi-tools.com`**. TLS and DNS use the
 platform wildcard and shared ALB (not configured in this repo).
 
@@ -334,6 +346,8 @@ Platform Application YAML, compositions, and goldens do **not** live here.
 ## Related
 
 - ADR 0008 — Temporal Cloud Codec Server (platform design)
+- Team worker interface (platform ops) —
+  [Declaring a worker](https://github.com/bitovi/bitovi-platform-services/blob/main/docs/operations/temporal-cloud-namespace.md)
 - [Temporal Codec Server docs](https://docs.temporal.io/codec-server)
 - [Data encryption](https://docs.temporal.io/production-deployment/data-encryption)
 - [temporal-proxy](https://docs.temporal.io/production-deployment/temporal-proxy/)
