@@ -109,8 +109,12 @@ func (v *JWKSValidator) Validate(ctx context.Context, bearerToken string) (Princ
 	}
 
 	principal := Principal{
-		Subject:    stringClaim(claims, "sub"),
-		Email:      firstNonEmpty(stringClaim(claims, "email"), stringClaim(claims, "https://saas-api.tmprl.cloud/email")),
+		Subject: stringClaim(claims, "sub"),
+		Email: firstNonEmpty(
+			stringClaim(claims, "email"),
+			stringClaim(claims, "https://saas-api.tmprl.cloud/email"),
+			stringClaim(claims, "https://saas-api.tmprl.cloud/user/email"),
+		),
 		Namespaces: extractNamespaces(claims, v.permissionClaim),
 		RawClaims:  map[string]any(claims),
 	}

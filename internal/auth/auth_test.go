@@ -245,3 +245,43 @@ func signToken(t *testing.T, priv *rsa.PrivateKey, claims map[string]any) string
 	_ = json.Marshal
 	return s
 }
+
+func TestBitoviEmailAuthorizer_bitovi_com_allowed(t *testing.T) {
+	a := auth.BitoviEmailAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Email: "mchaffe@bitovi.com"}
+	if err := a.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow for @bitovi.com email: %v", err)
+	}
+}
+
+func TestBitoviEmailAuthorizer_bitovi_com_case_insensitive(t *testing.T) {
+	a := auth.BitoviEmailAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Email: "MChaffe@BITOVI.COM"}
+	if err := a.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow for case-insensitive @bitovi.com email: %v", err)
+	}
+}
+
+func TestBitoviEmailAuthorizer_non_bitovi_denied(t *testing.T) {
+	a := auth.BitoviEmailAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Email: "user@example.com"}
+	if err := a.Authorize(context.Background(), p, "payments"); err == nil {
+		t.Fatal("expected deny for non-@bitovi.com email")
+	}
+}
+
+func TestBitoviEmailAuthorizer_empty_email_denied(t *testing.T) {
+	a := auth.BitoviEmailAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Email: ""}
+	if err := a.Authorize(context.Background(), p, "payments"); err == nil {
+		t.Fatal("expected deny for empty email")
+	}
+}
+
+func TestBitoviEmailAuthorizer_missing_namespace_denied(t *testing.T) {
+	a := auth.BitoviEmailAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Email: "mchaffe@bitovi.com"}
+	if err := a.Authorize(context.Background(), p, ""); err == nil {
+		t.Fatal("expected deny for missing namespace")
+	}
+}

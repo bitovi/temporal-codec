@@ -138,11 +138,12 @@ func (BitoviEmailAuthorizer) Authorize(_ context.Context, principal Principal, n
 		return ErrMissingNamespace
 	}
 
+	// Must have an email claim from the JWT
 	if principal.Email == "" {
 		return ErrForbidden
 	}
 
-	// Check if email ends with @bitovi.com (case-insensitive)
+	// Allow if email ends with @bitovi.com (case-insensitive)
 	if strings.HasSuffix(strings.ToLower(principal.Email), "@bitovi.com") {
 		return nil
 	}
