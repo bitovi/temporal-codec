@@ -1,0 +1,33 @@
+# Platform interface for the shared temporal-codec ContainerApp (platform-owned).
+# GitOps Application lives in bitovi-platform-services (gitops/apps/temporal-codec.yaml).
+# Image tag is empty until CI write-back (Deployment gated on a non-empty tag).
+name: temporal-codec
+repo: bitovi/temporal-codec
+
+workloads:
+  main:
+    kind: server
+    image:
+      tag: ""
+    port: 8080
+    health: /health
+    domain: temporal-codec.bitovi-tools.com
+    replicas: 2
+    autoscaling:
+      min: 2
+      max: 6
+    resources:
+      cpu: 100m
+      memory: 256Mi
+    env:
+      LOG_LEVEL: info
+      TEMPORAL_CLOUD_JWKS_URL: https://login.tmprl.cloud/.well-known/jwks.json
+      TEMPORAL_CLOUD_JWT_AUDIENCE: https://saas-api.tmprl.cloud
+      CORS_ALLOWED_ORIGINS: https://cloud.temporal.io
+      # After JWT authz, decode loads only this alias for the authorized namespace.
+      # awskms://alias/platform-managed/<short>-codec — never a foreign namespace key.
+      ENCRYPTION_URI_TEMPLATE: "awskms://alias/platform-managed/%s-codec"
+    capabilities:
+      # Fleet reader: kms:Decrypt / DescribeKey on Purpose=temporal-codec
+      # (no key Create; no App / TemporalNamespace tag restriction on the reader).
+      - temporal-codec-reader

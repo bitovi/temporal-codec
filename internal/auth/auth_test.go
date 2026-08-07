@@ -1,0 +1,186 @@
+package auth_test
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/MicahParks/jwkset"
+	"github.com/MicahParks/keyfunc/v3"
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/bitovi/temporal-codec/internal/auth"
+)
+
+const testAudience = "https://saas-api.tmprl.cloud"
+
+func TestClaimAuthorizer_wrongNamespaceDenied(t *testing.T) {
+	a := auth.ClaimAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Namespaces: []string{"payments"}}
+	if err := a.Authorize(context.Background(), p, "orders"); err == nil {
+		t.Fatal("expected deny for unauthorized namespace")
+	}
+}
+
+func TestClaimAuthorizer_authorizedNamespaceAllowed(t *testing.T) {
+	a := auth.ClaimAuthorizer{}
+	p := auth.Principal{Subject: "user-a", Namespaces: []string{"payments"}}
+	if err := a.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow: %v", err)
+	}
+	// Cloud-style X-Namespace matches short claim.
+	if err := a.Authorize(context.Background(), p, "payments.acct123"); err != nil {
+		t.Fatalf("expected allow for cloud ns form: %v", err)
+	}
+}
+
+func TestClaimAuthorizer_xNamespaceAloneNeverAuthorizes(t *testing.T) {
+	a := auth.ClaimAuthorizer{}
+	p := auth.Principal{Subject: "user-a"} // no permission claims
+	if err := a.Authorize(context.Background(), p, "payments"); err == nil {
+		t.Fatal("expected deny when token has no namespace permissions")
+	}
+}
+
+func TestMiddleware_validJWTWrongNamespace403(t *testing.T) {
+	priv, kf := testRSAKeyfunc(t)
+	validator, err := auth.NewJWKSValidatorFromKeyfunc(kf, auth.JWKSConfig{
+		Audience:        testAudience,
+		PermissionClaim: "permissions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := signToken(t, priv, map[string]any{
+		"sub":         "user-a",
+		"aud":         testAudience,
+		"exp":         time.Now().Add(time.Hour).Unix(),
+		"permissions": []string{"payments"},
+	})
+
+	called := false
+	h := auth.Middleware(validator, auth.ClaimAuthorizer{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/decode", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Namespace", "orders")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if called {
+		t.Fatal("handler must not run when namespace unauthorized (no decrypt)")
+	}
+}
+
+func TestMiddleware_authorizedNamespaceAllows(t *testing.T) {
+	priv, kf := testRSAKeyfunc(t)
+	validator, err := auth.NewJWKSValidatorFromKeyfunc(kf, auth.JWKSConfig{
+		Audience:        testAudience,
+		PermissionClaim: "permissions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	token := signToken(t, priv, map[string]any{
+		"sub":         "user-a",
+		"aud":         testAudience,
+		"exp":         time.Now().Add(time.Hour).Unix(),
+		"permissions": []string{"payments"},
+	})
+
+	called := false
+	h := auth.Middleware(validator, auth.ClaimAuthorizer{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		p, ok := auth.PrincipalFrom(r.Context())
+		if !ok || p.Subject != "user-a" {
+			t.Errorf("missing principal")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/decode", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Namespace", "payments")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("expected handler invocation")
+	}
+}
+
+func TestMiddleware_missingToken401(t *testing.T) {
+	h := auth.Middleware(auth.DisabledValidator{}, auth.AllowAllAuthorizer{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not run")
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/decode", nil)
+	req.Header.Set("X-Namespace", "payments")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d", rr.Code)
+	}
+}
+
+func testRSAKeyfunc(t *testing.T) (*rsa.PrivateKey, keyfunc.Keyfunc) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	store := jwkset.NewMemoryStorage()
+	jwk, err := jwkset.NewJWKFromKey(priv, jwkset.JWKOptions{
+		Metadata: jwkset.JWKMetadataOptions{KID: "test-key"},
+		Marshal:  jwkset.JWKMarshalOptions{Private: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.KeyWrite(ctx, jwk); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure storage is readable as public JWKS JSON (sanity).
+	if _, err := store.JSONPublic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	kf, err := keyfunc.New(keyfunc.Options{Ctx: ctx, Storage: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv, kf
+}
+
+func signToken(t *testing.T, priv *rsa.PrivateKey, claims map[string]any) string {
+	t.Helper()
+	// Normalize claims into MapClaims with registered types.
+	mc := jwt.MapClaims{}
+	for k, v := range claims {
+		mc[k] = v
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, mc)
+	tok.Header["kid"] = "test-key"
+	s, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ensure JSON serializable claims for debugging of failures without logging secrets.
+	_ = json.Marshal
+	return s
+}

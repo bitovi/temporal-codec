@@ -1,1 +1,35 @@
-tmp
+# Binaries
+/temporal-codec
+/bin/
+/dist/
+/tmp/
+
+# Go test / coverage artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Env / secrets (never commit real credentials)
+.env
+.env.*
+!.env.example
+.env.local
+.env.rc
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build / toolchain
+*.exe
+*.dll
+*.so
+*.dylib
+vendor/
+.air.toml
