@@ -3,19 +3,23 @@ package auth
 import (
 	"context"
 	"strings"
+
+	"github.com/bitovi/temporal-codec/internal/shared"
 )
 
 // ClaimAuthorizer authorizes when the principal's namespace claim list includes
-// the requested Namespace. X-Namespace is compared as supplied and also as its
-// short name (prefix before first '.') so Cloud forms like "payments.acct"
-// match a claim of "payments".
+// the requested Namespace. Two forms are accepted:
+//   - exact match: claim "payments.acct" authorizes request "payments.acct"
+//   - short-name match: claim "payments" authorizes request "payments.acct123"
+//     (claim carries the short name, request carries the Cloud full name)
+//
+// Notably, a full-name claim does NOT authorize a different full-name namespace:
+// claim "payments.accountA" does not authorize "payments.accountB".
 //
 // Fail-closed: empty or missing permission claims deny all namespaces.
 //
 // TODO(production): Confirm Temporal Cloud JWT claim schema for namespace
-// membership against live passAccessToken JWTs. Until then, principals only
-// pass when permissions appear under TEMPORAL_NAMESPACE_PERMISSION_CLAIM
-// (default "permissions") or the provisional keys listed in extractNamespaces.
+// membership against live passAccessToken JWTs (see extractNamespaces note).
 type ClaimAuthorizer struct{}
 
 // Authorize implements Authorizer.
@@ -28,13 +32,15 @@ func (ClaimAuthorizer) Authorize(_ context.Context, principal Principal, namespa
 		return ErrForbidden
 	}
 
-	wantShort := shortName(namespace)
+	wantShort := shared.ShortName(namespace)
 	for _, allowed := range principal.Namespaces {
 		allowed = strings.TrimSpace(allowed)
 		if allowed == "" {
 			continue
 		}
-		if equalNS(allowed, namespace) || equalNS(shortName(allowed), wantShort) {
+		// equalNS(allowed, namespace): exact match (full or short name)
+		// equalNS(allowed, wantShort): claim is the short name, request is full Cloud form
+		if equalNS(allowed, namespace) || equalNS(allowed, wantShort) {
 			return nil
 		}
 	}
@@ -61,9 +67,9 @@ func (s StaticAuthorizer) Authorize(_ context.Context, principal Principal, name
 	if allowed == nil {
 		return ErrForbidden
 	}
-	wantShort := shortName(namespace)
+	wantShort := shared.ShortName(namespace)
 	for _, a := range allowed {
-		if a == "*" || equalNS(a, namespace) || equalNS(shortName(a), wantShort) {
+		if a == "*" || equalNS(a, namespace) || equalNS(a, wantShort) {
 			return nil
 		}
 	}
@@ -79,13 +85,6 @@ func (AllowAllAuthorizer) Authorize(_ context.Context, _ Principal, namespace st
 		return ErrMissingNamespace
 	}
 	return nil
-}
-
-func shortName(ns string) string {
-	if i := strings.IndexByte(ns, '.'); i > 0 {
-		return ns[:i]
-	}
-	return ns
 }
 
 func equalNS(a, b string) bool {

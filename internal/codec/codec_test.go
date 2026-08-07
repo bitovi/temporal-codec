@@ -22,7 +22,7 @@ func TestRoundTripEncodeDecode(t *testing.T) {
 	}
 	defer func() { _ = mgr.Close() }()
 
-	pc := mgr.PayloadCodec("payments")
+	pc := mgr.PayloadCodec(ctx, "payments")
 	plain := []*commonpb.Payload{{
 		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
 		Data:     []byte(`{"hello":"world"}`),
@@ -93,7 +93,7 @@ func TestDecodeRejectsForeignNamespaceKey(t *testing.T) {
 	}
 	defer func() { _ = mgr.Close() }()
 
-	_, err = mgr.PayloadCodec("payments").Decode(cipher)
+	_, err = mgr.PayloadCodec(ctx, "payments").Decode(cipher)
 	if err == nil {
 		t.Fatal("expected decrypt to fail for foreign namespace key")
 	}
@@ -131,7 +131,7 @@ func TestDecodePassthroughUnencrypted(t *testing.T) {
 	}
 	defer func() { _ = mgr.Close() }()
 
-	pc := mgr.PayloadCodec("payments")
+	pc := mgr.PayloadCodec(ctx, "payments")
 	plain := []*commonpb.Payload{{
 		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
 		Data:     []byte(`ok`),

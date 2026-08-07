@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -46,7 +47,8 @@ func run() error {
 
 	var validator auth.Validator
 	var authorizer auth.Authorizer
-	ready := true
+	var ready atomic.Bool
+	ready.Store(true)
 
 	if cfg.AuthDisabled {
 		log.Warn("AUTH_DISABLED=true; namespace-bound authz is off — not for production")
@@ -73,14 +75,17 @@ func run() error {
 		Validator:    validator,
 		Authorizer:   authorizer,
 		CORSOrigins:  cfg.CORSOrigins,
-		Ready:        func() bool { return ready },
+		Ready:        ready.Load,
 		EnableEncode: cfg.EnableEncode,
+		MaxBodyBytes: cfg.MaxBodyBytes,
 	})
 
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srvAPI.Handler(),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -99,7 +104,10 @@ func run() error {
 
 	select {
 	case <-ctx.Done():
-		ready = false
+		// Mark unready before shutting down so the load balancer drains traffic
+		// during the next health-check probe interval before we stop accepting.
+		ready.Store(false)
+		time.Sleep(5 * time.Second)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)

@@ -82,7 +82,7 @@ func NewJWKSValidatorFromKeyfunc(kf keyfunc.Keyfunc, cfg JWKSConfig) (*JWKSValid
 
 // Validate parses and verifies a bearer JWT (without the "Bearer " prefix).
 func (v *JWKSValidator) Validate(ctx context.Context, bearerToken string) (Principal, error) {
-	token := trimBearer(bearerToken)
+	token := bearerToken
 	if token == "" {
 		return Principal{}, ErrMissingToken
 	}
@@ -120,11 +120,6 @@ func (v *JWKSValidator) Validate(ctx context.Context, bearerToken string) (Princ
 	return principal, nil
 }
 
-func trimBearer(bearerToken string) string {
-	// Validate receives raw token after middleware strips "Bearer ".
-	return bearerToken
-}
-
 func stringClaim(claims jwt.MapClaims, key string) string {
 	v, ok := claims[key]
 	if !ok || v == nil {
@@ -146,26 +141,35 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// extractNamespaces reads namespace short names or Cloud names from documented
-// and provisional claim keys. Production Temporal Cloud claim shape for
-// namespace membership is still to be confirmed against live tokens (see README TODO).
+// extractNamespaces reads the namespace list from the configured claim. When
+// the configured claim is present and non-empty it is authoritative — other
+// claim keys cannot widen access.  If the configured claim is absent, the
+// function falls back to a set of well-known Temporal Cloud claim names to
+// accommodate dev environments and unconfirmed token schemas.
+//
+// Production note: pin TEMPORAL_NAMESPACE_PERMISSION_CLAIM against a real
+// passAccessToken JWT so the fallback path is never reached in production.
 func extractNamespaces(claims jwt.MapClaims, primaryClaim string) []string {
-	keys := []string{
-		primaryClaim,
+	if ns := claimStringList(claims[primaryClaim]); len(ns) > 0 {
+		return ns
+	}
+	// Fallback for dev / unconfirmed schemas — skips primaryClaim (already empty).
+	seen := map[string]struct{}{}
+	var out []string
+	for _, key := range []string{
 		"permissions",
 		"namespaces",
 		"https://saas-api.tmprl.cloud/permissions",
 		"https://saas-api.tmprl.cloud/namespaces",
-	}
-	seen := map[string]struct{}{}
-	var out []string
-	for _, key := range keys {
+	} {
+		if key == primaryClaim {
+			continue
+		}
 		for _, ns := range claimStringList(claims[key]) {
-			if _, ok := seen[ns]; ok {
-				continue
+			if _, ok := seen[ns]; !ok {
+				seen[ns] = struct{}{}
+				out = append(out, ns)
 			}
-			seen[ns] = struct{}{}
-			out = append(out, ns)
 		}
 	}
 	return out

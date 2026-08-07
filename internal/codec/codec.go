@@ -3,6 +3,7 @@ package codec
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 	_ "gocloud.dev/secrets/localsecrets"
 
 	proxycrypto "github.com/temporalio/temporal-proxy/pkg/crypto"
+
+	"github.com/bitovi/temporal-codec/internal/shared"
 )
 
 // Wire metadata keys and encoding — must match temporal-proxy internal/proxy/encryption.go.
@@ -56,13 +59,17 @@ type Manager struct {
 	defaultURI  string
 	uriTemplate string
 	nsURIs      map[string]string
+	dekDuration time.Duration
+	renewBefore time.Duration
+	cacheSize   int
 
 	vault   *proxycrypto.Vault
 	reg     *proxycrypto.KEKRegistry
 	factory *proxycrypto.KeyFactory
 
-	mu   sync.Mutex
-	keks map[string]proxycrypto.KEK // cache by resolve URI for namespace
+	mu       sync.Mutex
+	keks     map[string]proxycrypto.KEK    // cache by resolved URI
+	nsVaults map[string]*proxycrypto.Vault // per-namespace vault; reuses DEK LRU
 }
 
 // New builds a Manager. Call Close when finished.
@@ -102,7 +109,16 @@ func New(ctx context.Context, opts Options) (*Manager, error) {
 		regOpts = append(regOpts, proxycrypto.WithDefaultKey(defaultKey))
 	}
 
-	for ns, uri := range opts.NamespaceURIs {
+	// Sort namespace keys for deterministic registry wiring (first alphabetically
+	// becomes the default when no explicit DefaultURI is provided).
+	nsKeys := make([]string, 0, len(opts.NamespaceURIs))
+	for ns := range opts.NamespaceURIs {
+		nsKeys = append(nsKeys, ns)
+	}
+	sort.Strings(nsKeys)
+
+	for _, ns := range nsKeys {
+		uri := opts.NamespaceURIs[ns]
 		k, err := factory.Create(ctx, uri)
 		if err != nil {
 			if defaultKey != nil {
@@ -120,7 +136,7 @@ func New(ctx context.Context, opts Options) (*Manager, error) {
 			regOpts = append(regOpts, proxycrypto.WithDefaultKey(k))
 		} else {
 			regOpts = append(regOpts, proxycrypto.WithKeyForNamespace(ns, k))
-			if short := shortName(ns); short != ns {
+			if short := shared.ShortName(ns); short != ns {
 				regOpts = append(regOpts, proxycrypto.WithKeyForNamespace(short, k))
 			}
 		}
@@ -161,10 +177,14 @@ func New(ctx context.Context, opts Options) (*Manager, error) {
 		defaultURI:  opts.DefaultURI,
 		uriTemplate: opts.NamespaceURITemplate,
 		nsURIs:      opts.NamespaceURIs,
+		dekDuration: opts.DEKDuration,
+		renewBefore: opts.RenewBefore,
+		cacheSize:   opts.CacheSize,
 		vault:       vault,
 		reg:         reg,
 		factory:     factory,
 		keks:        map[string]proxycrypto.KEK{},
+		nsVaults:    map[string]*proxycrypto.Vault{},
 	}, nil
 }
 
@@ -189,7 +209,7 @@ func (m *Manager) ResolveURI(namespace string) (string, error) {
 	if namespace == "" {
 		return "", fmt.Errorf("namespace is required to resolve encryption URI")
 	}
-	short := shortName(namespace)
+	short := shared.ShortName(namespace)
 	if uri, ok := m.nsURIs[namespace]; ok && uri != "" {
 		return uri, nil
 	}
@@ -209,20 +229,23 @@ func (m *Manager) ResolveURI(namespace string) (string, error) {
 }
 
 // PayloadCodec returns a converter.PayloadCodec bound to ns for Seal on Encode
-// and namespace-bound Open on Decode. Caller must only pass a namespace that
-// auth already authorized (JWT bound to X-Namespace).
-func (m *Manager) PayloadCodec(namespace string) converter.PayloadCodec {
-	return &payloadCodec{m: m, namespace: strings.TrimSpace(namespace)}
+// and namespace-bound Open on Decode. The supplied context propagates to KMS
+// calls (deadline, cancellation) — pass r.Context() from the HTTP handler.
+// Caller must only pass a namespace that auth already authorized (JWT bound to
+// X-Namespace).
+func (m *Manager) PayloadCodec(ctx context.Context, namespace string) converter.PayloadCodec {
+	return &payloadCodec{m: m, namespace: strings.TrimSpace(namespace), ctx: ctx}
 }
 
 type payloadCodec struct {
 	m         *Manager
 	namespace string
+	ctx       context.Context
 }
 
 // Encode implements converter.PayloadCodec — mirrors temporal-proxy encryptPayloads.
 func (c *payloadCodec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error) {
-	ctx := context.Background()
+	ctx := c.ctx
 	res := make([]*commonpb.Payload, len(payloads))
 	for i, p := range payloads {
 		data, err := p.Marshal()
@@ -248,7 +271,7 @@ func (c *payloadCodec) Encode(payloads []*commonpb.Payload) ([]*commonpb.Payload
 // Decode implements converter.PayloadCodec — mirrors temporal-proxy decryptPayloads.
 // Uses only the KEK for the authorized namespace (never opens wire-id alone).
 func (c *payloadCodec) Decode(payloads []*commonpb.Payload) ([]*commonpb.Payload, error) {
-	ctx := context.Background()
+	ctx := c.ctx
 	res := make([]*commonpb.Payload, len(payloads))
 	for i, p := range payloads {
 		if enc := string(p.GetMetadata()[metadataEncoding]); enc != encryptionEncoding {
@@ -298,7 +321,8 @@ func (m *Manager) openForNamespace(ctx context.Context, namespace string, msg *p
 		return pt, nil
 	}
 	// Namespace-bound unwrap only: rewrite wire ID to the opened KEK's ID so
-	// a one-shot vault keyed solely by that KEK can find it (alias vs ARN vs URI).
+	// the per-namespace vault (keyed solely by that KEK) can find it
+	// (alias vs ARN vs URI form differences).
 	bound := &proxycrypto.Message{
 		Ciphertext: msg.Ciphertext,
 		KeyMaterial: &proxycrypto.DEKMaterial{
@@ -306,7 +330,39 @@ func (m *Manager) openForNamespace(ctx context.Context, namespace string, msg *p
 			EncryptedDEK: msg.KeyMaterial.EncryptedDEK,
 		},
 	}
-	return openWithKEK(ctx, kek, bound)
+	nsVault, err := m.nsVaultFor(uri, kek)
+	if err != nil {
+		return nil, err
+	}
+	return nsVault.Open(ctx, bound)
+}
+
+// nsVaultFor returns a cached per-namespace vault for the given URI and KEK.
+// Each namespace gets its own vault with a DEK LRU, so repeated decrypts of
+// the same DEK hit the cache instead of calling KMS on every payload.
+// The vault does not own the KEK lifecycle (owned by m.keks); GC is safe.
+func (m *Manager) nsVaultFor(uri string, kek proxycrypto.KEK) (*proxycrypto.Vault, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if v, ok := m.nsVaults[uri]; ok {
+		return v, nil
+	}
+	reg, err := proxycrypto.NewKEKRegistry(proxycrypto.WithDefaultKey(kek))
+	if err != nil {
+		return nil, err
+	}
+	vault, err := proxycrypto.NewVault(reg,
+		proxycrypto.WithCacheSize(m.cacheSize),
+		proxycrypto.WithDefaultKeyConfig(proxycrypto.KeyConfig{
+			Duration:    m.dekDuration,
+			RenewBefore: m.renewBefore,
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	m.nsVaults[uri] = vault
+	return vault, nil
 }
 
 func keyIDBoundToNamespace(wireID, resolvedURI, openedID string) bool {
@@ -338,26 +394,6 @@ func normalizeTestingID(id string) string {
 	return ""
 }
 
-func openWithKEK(ctx context.Context, kek proxycrypto.KEK, msg *proxycrypto.Message) ([]byte, error) {
-	// One-shot registry for this namespace's KEK only. Do not Close the KEK
-	// (cached on Manager); GC drops vault/reg structs.
-	reg, err := proxycrypto.NewKEKRegistry(proxycrypto.WithDefaultKey(kek))
-	if err != nil {
-		return nil, err
-	}
-	vault, err := proxycrypto.NewVault(reg,
-		proxycrypto.WithCacheSize(32),
-		proxycrypto.WithDefaultKeyConfig(proxycrypto.KeyConfig{
-			Duration:    time.Hour,
-			RenewBefore: 15 * time.Minute,
-		}),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return vault.Open(ctx, msg)
-}
-
 func (m *Manager) getKEK(ctx context.Context, uri string) (proxycrypto.KEK, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -365,36 +401,23 @@ func (m *Manager) getKEK(ctx context.Context, uri string) (proxycrypto.KEK, erro
 		return k, nil
 	}
 
-	id := uri
-	openURI := uri
-	if strings.HasPrefix(strings.ToLower(uri), "base64key://") {
-		material := uri[len("base64key://"):]
-		openURI = "testing://" + material
-	}
-
-	k, err := m.factory.Create(ctx, openURI)
+	k, err := m.factory.Create(ctx, uri)
 	if err != nil {
-		kp, kErr := secrets.OpenKeeper(ctx, openURI)
+		kp, kErr := secrets.OpenKeeper(ctx, uri)
 		if kErr != nil {
 			return nil, fmt.Errorf("open KEK %s: %w", redactURI(uri), err)
 		}
-		k = &keeperKEK{id: id, kp: kp}
+		k = &keeperKEK{id: uri, kp: kp}
 	}
-	if k.ID() != id {
-		// Prefer stable wire form when registry stores URI-form IDs.
-		if strings.EqualFold(k.ID(), openURI) || strings.HasPrefix(strings.ToLower(id), "awskms://") {
-			k = &idOverrideKEK{inner: k, id: id}
+	if k.ID() != uri {
+		// Prefer stable wire form when the opened KEK's ID differs from the URI
+		// (e.g. alias → resolved ARN for awskms://).
+		if strings.EqualFold(k.ID(), uri) || strings.HasPrefix(strings.ToLower(uri), "awskms://") {
+			k = &idOverrideKEK{inner: k, id: uri}
 		}
 	}
 	m.keks[uri] = k
 	return k, nil
-}
-
-func shortName(ns string) string {
-	if i := strings.IndexByte(ns, '.'); i > 0 {
-		return ns[:i]
-	}
-	return ns
 }
 
 type keeperKEK struct {

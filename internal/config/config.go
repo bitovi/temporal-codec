@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -10,13 +11,13 @@ import (
 
 // Config is the process configuration for temporal-codec.
 type Config struct {
-	Port              int
-	LogLevel          string
-	JWKSURL           string
-	JWTAudience       string
-	JWTIssuer         string
-	CORSOrigins       []string
-	EncryptionURI     string
+	Port          int
+	LogLevel      string
+	JWKSURL       string
+	JWTAudience   string
+	JWTIssuer     string
+	CORSOrigins   []string
+	EncryptionURI string
 	// NamespaceURITemplate sprintf's Cloud short name into a platform KMS
 	// alias (ADR 0008): awskms://alias/platform-managed/%s-codec.
 	// Decode never uses a foreign key; only the template/map URI for the
@@ -28,12 +29,48 @@ type Config struct {
 	EnableEncode         bool
 	JWKSRefresh          time.Duration
 	ReadHeaderTimeout    time.Duration
+	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
+	MaxBodyBytes         int64
 }
 
 // Load reads configuration from the environment.
 func Load() (Config, error) {
+	port, err := envInt("PORT", 8080)
+	if err != nil {
+		return Config{}, err
+	}
+	authDisabled, err := envBool("AUTH_DISABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	enableEncode, err := envBool("ENABLE_ENCODE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	jwksRefresh, err := envDuration("JWKS_REFRESH_INTERVAL", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	readHeaderTimeout, err := envDuration("READ_HEADER_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	writeTimeout, err := envDuration("WRITE_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	idleTimeout, err := envDuration("IDLE_TIMEOUT", 120*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	maxBodyBytes, err := envInt64("MAX_BODY_BYTES", 10<<20) // 10 MiB
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		Port:                 envInt("PORT", 8080),
+		Port:                 port,
 		LogLevel:             envOr("LOG_LEVEL", "info"),
 		JWKSURL:              envOr("TEMPORAL_CLOUD_JWKS_URL", "https://login.tmprl.cloud/.well-known/jwks.json"),
 		JWTAudience:          envOr("TEMPORAL_CLOUD_JWT_AUDIENCE", "https://saas-api.tmprl.cloud"),
@@ -43,11 +80,14 @@ func Load() (Config, error) {
 		NamespaceURITemplate: envOr("ENCRYPTION_URI_TEMPLATE", ""),
 		NamespaceURIs:        parseNamespaceURIs(envOr("ENCRYPTION_URI_OVERRIDES", "")),
 		PermissionClaim:      envOr("TEMPORAL_NAMESPACE_PERMISSION_CLAIM", "permissions"),
-		AuthDisabled:         envBool("AUTH_DISABLED", false),
+		AuthDisabled:         authDisabled,
 		// Temporal Cloud UI only needs /decode; encode stays off unless local debug.
-		EnableEncode:      envBool("ENABLE_ENCODE", false),
-		JWKSRefresh:       envDuration("JWKS_REFRESH_INTERVAL", time.Hour),
-		ReadHeaderTimeout: envDuration("READ_HEADER_TIMEOUT", 10*time.Second),
+		EnableEncode:      enableEncode,
+		JWKSRefresh:       jwksRefresh,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxBodyBytes:      maxBodyBytes,
 	}
 
 	if cfg.Port <= 0 || cfg.Port > 65535 {
@@ -57,10 +97,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("ENCRYPTION_URI, ENCRYPTION_URI_TEMPLATE, or ENCRYPTION_URI_OVERRIDES is required")
 	}
 	// Fleet production default when only template is needed: leave EncryptionURI empty.
+	// Sort keys for deterministic selection.
 	if cfg.EncryptionURI == "" && cfg.NamespaceURITemplate == "" {
-		for _, uri := range cfg.NamespaceURIs {
-			cfg.EncryptionURI = uri
-			break
+		keys := make([]string, 0, len(cfg.NamespaceURIs))
+		for k := range cfg.NamespaceURIs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if len(keys) > 0 {
+			cfg.EncryptionURI = cfg.NamespaceURIs[keys[0]]
 		}
 	}
 	if !cfg.AuthDisabled {
@@ -81,40 +126,52 @@ func envOr(key, def string) string {
 	return def
 }
 
-func envInt(key string, def int) int {
+func envInt(key string, def int) (int, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
-		return def
+		return def, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return def
+		return def, fmt.Errorf("%s=%q: %w", key, v, err)
 	}
-	return n
+	return n, nil
 }
 
-func envBool(key string, def bool) bool {
+func envInt64(key string, def int64) (int64, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
-		return def
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return def, fmt.Errorf("%s=%q: %w", key, v, err)
+	}
+	return n, nil
+}
+
+func envBool(key string, def bool) (bool, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		return def, fmt.Errorf("%s=%q: expected true/false/1/0, %w", key, v, err)
 	}
-	return b
+	return b, nil
 }
 
-func envDuration(key string, def time.Duration) time.Duration {
+func envDuration(key string, def time.Duration) (time.Duration, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
-		return def
+		return def, nil
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return def
+		return def, fmt.Errorf("%s=%q: %w", key, v, err)
 	}
-	return d
+	return d, nil
 }
 
 func splitCSV(s string) []string {

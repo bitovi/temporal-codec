@@ -98,6 +98,8 @@ Structured access logs may include status, duration, namespace, and principal
 
 ## Architecture
 
+See [docs/architecture.md](docs/architecture.md) for package layout, the full decode request flow, auth and encryption models, and configuration reference.
+
 ### End-to-end flow
 
 ```mermaid

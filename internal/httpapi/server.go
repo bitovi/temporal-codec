@@ -25,20 +25,22 @@ type Server struct {
 	corsOrigins  map[string]struct{}
 	ready        ReadyChecker
 	enableEncode bool
+	maxBodyBytes int64
 	started      time.Time
 }
 
 // Options wires HTTP dependencies.
 type Options struct {
-	Logger       *slog.Logger
-	Manager      *codec.Manager
-	Validator    auth.Validator
-	Authorizer   auth.Authorizer
-	CORSOrigins  []string
-	Ready        ReadyChecker
+	Logger      *slog.Logger
+	Manager     *codec.Manager
+	Validator   auth.Validator
+	Authorizer  auth.Authorizer
+	CORSOrigins []string
+	Ready       ReadyChecker
 	// EnableEncode exposes POST /encode (local/debug only). Production is
 	// decode-only: Temporal Cloud UI only calls /decode.
 	EnableEncode bool
+	MaxBodyBytes int64
 }
 
 // New constructs Server.
@@ -56,6 +58,10 @@ func New(opts Options) *Server {
 			origins[o] = struct{}{}
 		}
 	}
+	maxBodyBytes := opts.MaxBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = 10 << 20 // 10 MiB default
+	}
 	return &Server{
 		log:          opts.Logger,
 		manager:      opts.Manager,
@@ -64,6 +70,7 @@ func New(opts Options) *Server {
 		corsOrigins:  origins,
 		ready:        opts.Ready,
 		enableEncode: opts.EnableEncode,
+		maxBodyBytes: maxBodyBytes,
 		started:      time.Now().UTC(),
 	}
 }
@@ -74,10 +81,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	authMW := auth.Middleware(s.validator, s.authorizer)
-	// Access log after auth so principal subject is available without logging tokens.
-	mux.Handle("POST /decode", authMW(s.withAccessLog(http.HandlerFunc(s.handleCodec))))
+	// Access log wraps auth so auth failures (400/401/403) produce log lines.
+	// The principal subject is logged when present; absent on rejection.
+	mux.Handle("POST /decode", s.withAccessLog(authMW(http.HandlerFunc(s.handleCodec))))
 	if s.enableEncode {
-		mux.Handle("POST /encode", authMW(s.withAccessLog(http.HandlerFunc(s.handleCodec))))
+		mux.Handle("POST /encode", s.withAccessLog(authMW(http.HandlerFunc(s.handleCodec))))
 	}
 
 	return s.withCORS(mux)
@@ -104,7 +112,8 @@ func (s *Server) handleCodec(w http.ResponseWriter, r *http.Request) {
 	// X-Namespace was already JWT-bound by auth middleware. PayloadCodec
 	// resolves only that namespace's CMK (never a foreign key or bare wire id).
 	ns := strings.TrimSpace(r.Header.Get("X-Namespace"))
-	pc := s.manager.PayloadCodec(ns)
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
+	pc := s.manager.PayloadCodec(r.Context(), ns)
 	// Temporal payload codec HTTP shape (POST body: {"payloads":[...]}).
 	converter.NewPayloadCodecHTTPHandler(pc).ServeHTTP(w, r)
 }
@@ -118,6 +127,8 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.code = code
 	w.ResponseWriter.WriteHeader(code)
 }
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (s *Server) withAccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,11 +155,13 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 
 func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set Vary unconditionally so caches never serve one origin's response
+		// to another, regardless of whether the origin is allowed.
+		w.Header().Set("Vary", "Origin")
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if _, ok := s.corsOrigins[origin]; ok {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Namespace")
 				w.Header().Set("Access-Control-Max-Age", "3600")

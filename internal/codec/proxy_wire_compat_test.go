@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	commonpb "go.temporal.io/api/common/v1"
 	proxycrypto "github.com/temporalio/temporal-proxy/pkg/crypto"
+	commonpb "go.temporal.io/api/common/v1"
 
 	"github.com/bitovi/temporal-codec/internal/codec"
 )
@@ -113,7 +113,7 @@ func TestProxyEncrypt_CodecDecode_wireCompat(t *testing.T) {
 	}
 	defer func() { _ = mgr.Close() }()
 
-	got, err := mgr.PayloadCodec(ns).Decode(cipher)
+	got, err := mgr.PayloadCodec(ctx, ns).Decode(cipher)
 	if err != nil {
 		t.Fatalf("codec decode: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestProxyEncrypt_CodecDecode_awskmsOptional(t *testing.T) {
 	}
 	defer func() { _ = mgr.Close() }()
 
-	got, err := mgr.PayloadCodec(ns).Decode(cipher)
+	got, err := mgr.PayloadCodec(ctx, ns).Decode(cipher)
 	if err != nil {
 		t.Fatalf("codec decode: %v", err)
 	}

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	commonpb "go.temporal.io/api/common/v1"
 	proxycrypto "github.com/temporalio/temporal-proxy/pkg/crypto"
+	commonpb "go.temporal.io/api/common/v1"
 
 	"github.com/bitovi/temporal-codec/internal/auth"
 	"github.com/bitovi/temporal-codec/internal/codec"
