@@ -3,12 +3,11 @@
 # Image tag is empty until CI write-back (Deployment gated on a non-empty tag).
 name: temporal-codec
 repo: bitovi/temporal-codec
-
 workloads:
   main:
     kind: server
     image:
-      tag: ""
+      tag: "v0.0.2"
     port: 8080
     health: /health
     domain: temporal-codec.bitovi-tools.com
