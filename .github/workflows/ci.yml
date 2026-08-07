@@ -2,7 +2,11 @@ name: CI
 on:
   push:
     branches: ["**"]
+    paths-ignore:
+      - "deploy/values.yaml"
   pull_request:
+    paths-ignore:
+      - "deploy/values.yaml"
 
 jobs:
   test:

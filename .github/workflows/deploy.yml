@@ -1,0 +1,59 @@
+# Test, build, and deploy temporal-codec server image.
+#
+# Tag push (v*) → go test → ECR (OIDC via ESO-pushed secrets) → write
+# workloads.main.image.tag into deploy/values.yaml on main for Argo.
+
+name: Test, build, and deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+
+  release:
+    needs: [test]
+    uses: bitovi/platform-ci/.github/workflows/container-build.yml@v0.0.3
+    permissions:
+      id-token: write
+      contents: write
+      actions: write
+    with:
+      values-file: deploy/values.yaml
+      image-tag-path: .workloads.main.image.tag
+      image-tag: ${{ github.ref_name }}
+      deploy-branch: main
+      writeback-app-id: ${{ vars.CI_WRITEBACK_APP_ID }}
+      environment-label: release
+    secrets: inherit
+
+  notify:
+    name: Slack Notification
+    needs: [test, release]
+    if: always()
+    uses: ./.github/workflows/slack-notification.yml
+    with:
+      status: ${{ (needs.test.result == 'success' && needs.release.result == 'success') && 'success' || 'failure' }}
+      service_name: temporal-codec
+      environment: production
+      title: ${{ (needs.test.result == 'success' && needs.release.result == 'success') && 'release deployed' || 'release failed' }}
+      detail: "Tag: ${{ github.ref_name }}"
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL || secrets.BITOVI_PLATFORM_SLACK_WEBHOOK_URL }}

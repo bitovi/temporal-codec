@@ -1,0 +1,73 @@
+# Slack notification reusable workflow — called by deploy.yml.
+
+name: Slack Notification
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        description: "Outcome status: 'success' or 'failure'"
+        required: true
+        type: string
+      service_name:
+        description: "Service name displayed in the notification"
+        required: true
+        type: string
+      environment:
+        description: "Deployment environment (e.g. staging, uat, production)"
+        required: true
+        type: string
+      title:
+        description: "Main notification message line without emoji"
+        required: true
+        type: string
+      detail:
+        description: "Optional second line of detail"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification (with detail)
+        if: inputs.detail != ''
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ inputs.service_name }}> *${{ inputs.environment }}* ${{ inputs.title }} ${{ inputs.status == 'success' && ':white_check_mark:' || ':x:' }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ inputs.detail }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
+
+      - name: Send Slack Notification
+        if: inputs.detail == ''
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "<${{ github.server_url }}/${{ github.repository }}|${{ inputs.service_name }}> *${{ inputs.environment }}* ${{ inputs.title }} ${{ inputs.status == 'success' && ':white_check_mark:' || ':x:' }}"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "> Check the logs for <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>."
