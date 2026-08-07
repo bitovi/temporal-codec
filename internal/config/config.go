@@ -25,6 +25,9 @@ type Config struct {
 	NamespaceURITemplate string
 	NamespaceURIs        map[string]string
 	PermissionClaim      string
+	// NamespaceACL maps email addresses (lowercase) to allowed namespaces.
+	// Format: EMAIL1=ns1,ns2;EMAIL2=ns3. Used by EmailAuthorizer.
+	NamespaceACL         map[string][]string
 	AuthDisabled         bool
 	EnableEncode         bool
 	JWKSRefresh          time.Duration
@@ -80,6 +83,7 @@ func Load() (Config, error) {
 		NamespaceURITemplate: envOr("ENCRYPTION_URI_TEMPLATE", ""),
 		NamespaceURIs:        parseNamespaceURIs(envOr("ENCRYPTION_URI_OVERRIDES", "")),
 		PermissionClaim:      envOr("TEMPORAL_NAMESPACE_PERMISSION_CLAIM", "permissions"),
+		NamespaceACL:         parseNamespaceACL(envOr("NAMESPACE_ACL", "")),
 		AuthDisabled:         authDisabled,
 		// Temporal Cloud UI only needs /decode; encode stays off unless local debug.
 		EnableEncode:      enableEncode,
@@ -208,6 +212,40 @@ func parseNamespaceURIs(s string) map[string]string {
 		uri = strings.TrimSpace(uri)
 		if ns != "" && uri != "" {
 			out[ns] = uri
+		}
+	}
+	return out
+}
+
+// parseNamespaceACL parses "email1=ns1,ns2;email2=ns3".
+// Returns a map of lowercase email -> namespaces.
+func parseNamespaceACL(s string) map[string][]string {
+	if s == "" {
+		return map[string][]string{}
+	}
+	out := make(map[string][]string)
+	for _, pair := range strings.Split(s, ";") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		email, nsList, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		email = strings.ToLower(strings.TrimSpace(email))
+		if email == "" {
+			continue
+		}
+		var namespaces []string
+		for _, ns := range strings.Split(nsList, ",") {
+			ns = strings.TrimSpace(ns)
+			if ns != "" {
+				namespaces = append(namespaces, ns)
+			}
+		}
+		if len(namespaces) > 0 {
+			out[email] = namespaces
 		}
 	}
 	return out

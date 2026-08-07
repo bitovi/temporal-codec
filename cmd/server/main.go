@@ -66,7 +66,18 @@ func run() error {
 			return fmt.Errorf("jwks: %w", err)
 		}
 		validator = v
-		authorizer = auth.ClaimAuthorizer{}
+
+		// Build authorizer chain: email ACL first, then JWT claims, then deny
+		claimAuth := auth.ClaimAuthorizer{}
+		if len(cfg.NamespaceACL) > 0 {
+			authorizer = auth.EmailAuthorizer{
+				ACL:      cfg.NamespaceACL,
+				Fallback: claimAuth,
+			}
+			log.Info("namespace ACL enabled", "email_count", len(cfg.NamespaceACL))
+		} else {
+			authorizer = claimAuth
+		}
 	}
 
 	srvAPI := httpapi.New(httpapi.Options{

@@ -47,6 +47,67 @@ func TestClaimAuthorizer_xNamespaceAloneNeverAuthorizes(t *testing.T) {
 	}
 }
 
+func TestEmailAuthorizer_emailACLallow(t *testing.T) {
+	acl := map[string][]string{
+		"alice@example.com": {"payments"},
+		"bob@example.com":   {"orders", "inventory"},
+	}
+	authorizer := auth.EmailAuthorizer{ACL: acl, Fallback: auth.ClaimAuthorizer{}}
+
+	// Alice can access payments
+	p := auth.Principal{Email: "alice@example.com"}
+	if err := authorizer.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow: %v", err)
+	}
+
+	// Bob can access orders and inventory
+	p = auth.Principal{Email: "bob@example.com"}
+	if err := authorizer.Authorize(context.Background(), p, "orders"); err != nil {
+		t.Fatalf("expected allow: %v", err)
+	}
+
+	// Alice cannot access orders
+	p = auth.Principal{Email: "alice@example.com"}
+	if err := authorizer.Authorize(context.Background(), p, "orders"); err == nil {
+		t.Fatal("expected deny")
+	}
+}
+
+func TestEmailAuthorizer_caseInsensitiveEmail(t *testing.T) {
+	acl := map[string][]string{
+		"alice@example.com": {"payments"},
+	}
+	authorizer := auth.EmailAuthorizer{ACL: acl, Fallback: auth.ClaimAuthorizer{}}
+
+	// Uppercase email should still match (normalized to lowercase)
+	p := auth.Principal{Email: "ALICE@EXAMPLE.COM"}
+	if err := authorizer.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow for case-insensitive match: %v", err)
+	}
+}
+
+func TestEmailAuthorizer_fallbackToClaimAuth(t *testing.T) {
+	acl := map[string][]string{
+		"alice@example.com": {"payments"},
+	}
+	authorizer := auth.EmailAuthorizer{ACL: acl, Fallback: auth.ClaimAuthorizer{}}
+
+	// User not in ACL falls back to claim auth
+	p := auth.Principal{
+		Email:      "charlie@example.com",
+		Namespaces: []string{"reports"},
+	}
+	if err := authorizer.Authorize(context.Background(), p, "reports"); err != nil {
+		t.Fatalf("expected fallback to allow: %v", err)
+	}
+
+	// Fallback denies if namespace not in claims
+	p = auth.Principal{Email: "charlie@example.com", Namespaces: []string{"reports"}}
+	if err := authorizer.Authorize(context.Background(), p, "orders"); err == nil {
+		t.Fatal("expected fallback to deny")
+	}
+}
+
 func TestMiddleware_validJWTWrongNamespace403(t *testing.T) {
 	priv, kf := testRSAKeyfunc(t)
 	validator, err := auth.NewJWKSValidatorFromKeyfunc(kf, auth.JWKSConfig{
