@@ -27,14 +27,14 @@ type Config struct {
 	PermissionClaim      string
 	// NamespaceACL maps email addresses (lowercase) to allowed namespaces.
 	// Format: EMAIL1=ns1,ns2;EMAIL2=ns3. Used by EmailAuthorizer.
-	NamespaceACL         map[string][]string
-	AuthDisabled         bool
-	EnableEncode         bool
-	JWKSRefresh          time.Duration
-	ReadHeaderTimeout    time.Duration
-	WriteTimeout         time.Duration
-	IdleTimeout          time.Duration
-	MaxBodyBytes         int64
+	NamespaceACL      map[string][]string
+	AuthDisabled      bool
+	EnableEncode      bool
+	JWKSRefresh       time.Duration
+	ReadHeaderTimeout time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxBodyBytes      int64
 }
 
 // Load reads configuration from the environment.
