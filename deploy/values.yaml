@@ -7,7 +7,7 @@ workloads:
   main:
     kind: server
     image:
-      tag: "v0.0.2"
+      tag: "v0.0.3"
     port: 8080
     health: /health
     domain: temporal-codec.bitovi-tools.com
