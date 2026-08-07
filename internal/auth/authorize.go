@@ -126,6 +126,30 @@ func (e EmailAuthorizer) Authorize(ctx context.Context, principal Principal, nam
 	return ErrForbidden
 }
 
+// BitoviEmailAuthorizer allows all requests from Temporal Cloud users
+// with a .bitovi.com email address. This grants access to any namespace
+// for authenticated Bitovi team members.
+type BitoviEmailAuthorizer struct{}
+
+// Authorize implements Authorizer.
+func (BitoviEmailAuthorizer) Authorize(_ context.Context, principal Principal, namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return ErrMissingNamespace
+	}
+
+	if principal.Email == "" {
+		return ErrForbidden
+	}
+
+	// Check if email ends with @bitovi.com (case-insensitive)
+	if strings.HasSuffix(strings.ToLower(principal.Email), "@bitovi.com") {
+		return nil
+	}
+
+	return ErrForbidden
+}
+
 // ChainAuthorizer tries multiple authorizers in sequence; first success wins.
 // Returns nil if any authorizer returns nil; otherwise returns ErrForbidden.
 type ChainAuthorizer struct {

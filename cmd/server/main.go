@@ -67,17 +67,9 @@ func run() error {
 		}
 		validator = v
 
-		// Build authorizer chain: email ACL first, then JWT claims, then deny
-		claimAuth := auth.ClaimAuthorizer{}
-		if len(cfg.NamespaceACL) > 0 {
-			authorizer = auth.EmailAuthorizer{
-				ACL:      cfg.NamespaceACL,
-				Fallback: claimAuth,
-			}
-			log.Info("namespace ACL enabled", "email_count", len(cfg.NamespaceACL))
-		} else {
-			authorizer = claimAuth
-		}
+		// Use BitoviEmailAuthorizer: allows all Temporal Cloud requests from @bitovi.com email
+		authorizer = auth.BitoviEmailAuthorizer{}
+		log.Info("authorization: Bitovi email authorizer enabled (@bitovi.com email required)")
 	}
 
 	srvAPI := httpapi.New(httpapi.Options{
