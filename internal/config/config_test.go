@@ -83,6 +83,29 @@ func TestLoadNamespaceACL(t *testing.T) {
 	}
 }
 
+func TestLoadNamespaceACLFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/namespace_acl"
+	content := "alice@example.com=payments,orders;bob@example.com=inventory\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := config.LoadNamespaceACLFile(path)
+	want := map[string][]string{
+		"alice@example.com": {"payments", "orders"},
+		"bob@example.com":   {"inventory"},
+	}
+	if !mapsEqual(got, want) {
+		t.Errorf("LoadNamespaceACLFile\ngot: %v\nwant: %v", got, want)
+	}
+
+	missing := config.LoadNamespaceACLFile(dir + "/missing")
+	if len(missing) != 0 {
+		t.Errorf("missing file should return empty map, got %v", missing)
+	}
+}
+
 func mapsEqual(a, b map[string][]string) bool {
 	if len(a) != len(b) {
 		return false
