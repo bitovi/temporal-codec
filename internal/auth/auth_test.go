@@ -102,9 +102,38 @@ func TestEmailAuthorizer_fallbackToClaimAuth(t *testing.T) {
 	}
 
 	// Fallback denies if namespace not in claims
-	p = auth.Principal{Email: "charlie@example.com", Namespaces: []string{"reports"}}
-	if err := authorizer.Authorize(context.Background(), p, "orders"); err == nil {
-		t.Fatal("expected fallback to deny")
+	if err := authorizer.Authorize(context.Background(), p, "payments"); err == nil {
+		t.Fatal("expected fallback deny")
+	}
+}
+
+func TestEmailAuthorizer_LoadACL_reloadOnRead(t *testing.T) {
+	acl := map[string][]string{
+		"alice@example.com": {"payments"},
+	}
+	calls := 0
+	authorizer := auth.EmailAuthorizer{
+		LoadACL: func() map[string][]string {
+			calls++
+			return acl
+		},
+		Fallback: auth.ClaimAuthorizer{},
+	}
+
+	p := auth.Principal{Email: "alice@example.com"}
+	if err := authorizer.Authorize(context.Background(), p, "payments"); err != nil {
+		t.Fatalf("expected allow: %v", err)
+	}
+	// Mutate underlying map — next authorize must see the update
+	acl["alice@example.com"] = []string{"orders"}
+	if err := authorizer.Authorize(context.Background(), p, "payments"); err == nil {
+		t.Fatal("expected deny after ACL reload removed payments")
+	}
+	if err := authorizer.Authorize(context.Background(), p, "orders"); err != nil {
+		t.Fatalf("expected allow for orders after reload: %v", err)
+	}
+	if calls < 3 {
+		t.Fatalf("expected LoadACL called per authorize, got %d", calls)
 	}
 }
 

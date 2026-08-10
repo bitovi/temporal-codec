@@ -27,7 +27,10 @@ type Config struct {
 	PermissionClaim      string
 	// NamespaceACL maps email addresses (lowercase) to allowed namespaces.
 	// Format: EMAIL1=ns1,ns2;EMAIL2=ns3. Used by EmailAuthorizer.
-	NamespaceACL      map[string][]string
+	NamespaceACL map[string][]string
+	// NamespaceACLFile is a path to a file with the same NAMESPACE_ACL format
+	// (e.g. ConfigMap mount). When set, EmailAuthorizer reloads on each authorize.
+	NamespaceACLFile  string
 	AuthDisabled      bool
 	EnableEncode      bool
 	JWKSRefresh       time.Duration
@@ -83,7 +86,8 @@ func Load() (Config, error) {
 		NamespaceURITemplate: envOr("ENCRYPTION_URI_TEMPLATE", ""),
 		NamespaceURIs:        parseNamespaceURIs(envOr("ENCRYPTION_URI_OVERRIDES", "")),
 		PermissionClaim:      envOr("TEMPORAL_NAMESPACE_PERMISSION_CLAIM", "permissions"),
-		NamespaceACL:         parseNamespaceACL(envOr("NAMESPACE_ACL", "")),
+		NamespaceACL:         ParseNamespaceACL(envOr("NAMESPACE_ACL", "")),
+		NamespaceACLFile:     envOr("NAMESPACE_ACL_FILE", ""),
 		AuthDisabled:         authDisabled,
 		// Temporal Cloud UI only needs /decode; encode stays off unless local debug.
 		EnableEncode:      enableEncode,
@@ -217,9 +221,9 @@ func parseNamespaceURIs(s string) map[string]string {
 	return out
 }
 
-// parseNamespaceACL parses "email1=ns1,ns2;email2=ns3".
+// ParseNamespaceACL parses "email1=ns1,ns2;email2=ns3".
 // Returns a map of lowercase email -> namespaces.
-func parseNamespaceACL(s string) map[string][]string {
+func ParseNamespaceACL(s string) map[string][]string {
 	if s == "" {
 		return map[string][]string{}
 	}
@@ -249,4 +253,18 @@ func parseNamespaceACL(s string) map[string][]string {
 		}
 	}
 	return out
+}
+
+// LoadNamespaceACLFile reads path and parses NAMESPACE_ACL format.
+// Missing/unreadable files return an empty map (fail closed for email ACL;
+// EmailAuthorizer still falls back to ClaimAuthorizer).
+func LoadNamespaceACLFile(path string) map[string][]string {
+	if path == "" {
+		return map[string][]string{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string][]string{}
+	}
+	return ParseNamespaceACL(string(data))
 }

@@ -91,10 +91,25 @@ func (AllowAllAuthorizer) Authorize(_ context.Context, _ Principal, namespace st
 // Falls back to ClaimAuthorizer if the principal has no email or isn't in the ACL.
 // This decouples namespace access from Temporal Cloud JWT claims.
 type EmailAuthorizer struct {
-	// ACL maps email to allowed namespaces
+	// ACL maps email to allowed namespaces (static). Used when LoadACL is nil.
 	ACL map[string][]string
+	// LoadACL, when set, is called on every Authorize (reload-on-read for a
+	// mounted ConfigMap). Takes precedence over ACL.
+	LoadACL func() map[string][]string
 	// Fallback authorizer when email lookup fails
 	Fallback Authorizer
+}
+
+func (e EmailAuthorizer) aclMap() map[string][]string {
+	if e.LoadACL != nil {
+		if m := e.LoadACL(); m != nil {
+			return m
+		}
+	}
+	if e.ACL != nil {
+		return e.ACL
+	}
+	return map[string][]string{}
 }
 
 // Authorize implements Authorizer.
@@ -106,7 +121,7 @@ func (e EmailAuthorizer) Authorize(ctx context.Context, principal Principal, nam
 
 	// Try email-based ACL first
 	if principal.Email != "" {
-		allowed := e.ACL[strings.ToLower(principal.Email)]
+		allowed := e.aclMap()[strings.ToLower(principal.Email)]
 		if allowed != nil {
 			wantShort := shared.ShortName(namespace)
 			for _, a := range allowed {

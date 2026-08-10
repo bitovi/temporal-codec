@@ -67,9 +67,25 @@ func run() error {
 		}
 		validator = v
 
-		// Use BitoviEmailAuthorizer: allows all Temporal Cloud requests from @bitovi.com email
-		authorizer = auth.BitoviEmailAuthorizer{}
-		log.Info("authorization: Bitovi email authorizer enabled (@bitovi.com email required)")
+		claimAuth := auth.ClaimAuthorizer{}
+		switch {
+		case cfg.NamespaceACLFile != "":
+			path := cfg.NamespaceACLFile
+			authorizer = auth.EmailAuthorizer{
+				LoadACL:  func() map[string][]string { return config.LoadNamespaceACLFile(path) },
+				Fallback: claimAuth,
+			}
+			log.Info("authorization: EmailAuthorizer with NAMESPACE_ACL_FILE (reload-on-read)", "path", path)
+		case len(cfg.NamespaceACL) > 0:
+			authorizer = auth.EmailAuthorizer{
+				ACL:      cfg.NamespaceACL,
+				Fallback: claimAuth,
+			}
+			log.Info("authorization: EmailAuthorizer with NAMESPACE_ACL env", "emails", len(cfg.NamespaceACL))
+		default:
+			authorizer = claimAuth
+			log.Info("authorization: ClaimAuthorizer only (no NAMESPACE_ACL / NAMESPACE_ACL_FILE)")
+		}
 	}
 
 	srvAPI := httpapi.New(httpapi.Options{

@@ -26,6 +26,18 @@ workloads:
       # After JWT authz, decode loads only this alias for the authorized namespace.
       # awskms://alias/platform-managed/<short>-codec — never a foreign namespace key.
       ENCRYPTION_URI_TEMPLATE: "awskms://alias/platform-managed/%s-codec"
+      # Fleet ACL from CodecACLAggregator ConfigMap (platform overlay mounts it).
+      NAMESPACE_ACL_FILE: /etc/codec/namespace_acl
+    advanced:
+      volumes:
+        - name: codec-acls
+          configMap:
+            name: codec-acls
+            optional: true
+      volumeMounts:
+        - name: codec-acls
+          mountPath: /etc/codec
+          readOnly: true
     capabilities:
       # Fleet reader: kms:Decrypt / DescribeKey on Purpose=temporal-codec
       # (no key Create; no App / TemporalNamespace tag restriction on the reader).
